@@ -176,7 +176,7 @@ struct WsPutRequestUploader
 {
     ///@brief   A callback to upload 'put' and 'putPart' payload. 
     ///@details The method is supposed to return a number of bytes 
-    /// it has written into the provided buffer @chunkBuf.
+    /// it has written into the provided buffer chunkBuf.
     /// If the return value is less than the chunkSize, the farther processing will be
     /// stopped.
 
