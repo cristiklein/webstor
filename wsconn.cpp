@@ -93,7 +93,7 @@ static const TcpKeepAliveParams s_tcpKeepAliveProbes =
 // Linux (as of 2012/09/15) is 128 KB, which is too small.  The value is controlled
 // by /proc/sys/net/core/rmem_max which should be set to at least 2 MB.
 
-static const UInt32 s_socketBufferSize = 1024 * 1024;  // 1MB
+static const UInt32 s_socketBufferSize = 10 * 1024 * 1024;  // 10MiB
 
 //////////////////////////////////////////////////////////////////////////////
 // String conversion functions. 
