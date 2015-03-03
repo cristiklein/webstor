@@ -410,6 +410,9 @@ appendQueryPart( std::string *url, const char *key, const char *value, bool *pfi
 static const char s_aclHeaderKey[] = "x-amz-acl";
 static const char s_aclHeaderValue[] = "public-read";
 
+static const char s_copySourceHeaderKey[] = "x-amz-copy-source";
+static const char s_copySourceRangeHeaderKey[] = "x-amz-copy-source-range";
+
 static const char s_encryptHeaderKey[] = "x-amz-server-side-encryption";
 static const char s_encryptHeaderValue[] = "AES256";
 
@@ -436,7 +439,8 @@ static void
 calcSignature( const std::string &accKey, const std::string &secKey,
     const char *contentMd5, const char *contentType, const char *date, bool makePublic, bool srvEncrypt,
     const char *action, const char *bucketName, const char *key, WsStorType storType, 
-    std::string *signature, std::string sessionToken )
+    std::string *signature, std::string sessionToken, const std::string &copySource,
+    const std::string &copySourceRange)
 {
     dbgAssert( action );
     dbgAssert( signature );
@@ -456,6 +460,12 @@ calcSignature( const std::string &accKey, const std::string &secKey,
 
     if( makePublic )
         appendSigHeader( s_aclHeaderKey, s_aclHeaderValue, &toSign );
+
+    if( copySource.size() )
+        appendSigHeader( s_copySourceHeaderKey, copySource.c_str(), &toSign );
+
+    if( copySourceRange.size() )
+        appendSigHeader( s_copySourceRangeHeaderKey, copySourceRange.c_str(), &toSign );
 
     if( sessionToken.compare("") != 0 )
     	appendSigHeader( s_tokenHeaderKey, sessionToken.c_str(), &toSign );
@@ -540,7 +550,9 @@ static void
 setRequestHeaders( const std::string &accKey, const std::string &secKey,
     const char *contentMd5, const char *contentType, bool makePublic, bool srvEncrypt,
     const char *action, const char *bucketName, const char *key, WsStorType storType, 
-    ScopedCurlList *plist, const std::string sessionToken )
+    ScopedCurlList *plist, const std::string sessionToken,
+    const std::string &copySource,
+    const std::string &copySourceRange )
 {
     dbgAssert( plist );
 
@@ -572,7 +584,7 @@ setRequestHeaders( const std::string &accKey, const std::string &secKey,
     calcSignature( accKey, secKey,
         contentMd5, contentType, date, makePublic, srvEncrypt,
         action, bucketName, key, storType,
-        &signature, sessionToken );
+        &signature, sessionToken, copySource, copySourceRange );
 
     // Set request headers.
 
@@ -608,6 +620,12 @@ setRequestHeaders( const std::string &accKey, const std::string &secKey,
 
     if( makePublic )
         appendRequestHeader( s_aclHeaderKey, s_aclHeaderValue, plist );
+
+    if( copySource.size() )
+    	appendRequestHeader( s_copySourceHeaderKey, copySource.c_str(), plist );
+
+    if( copySourceRange.size() )
+    	appendRequestHeader( s_copySourceRangeHeaderKey, copySourceRange.c_str(), plist );
 
     if( sessionToken.compare("") != 0 )
     	appendRequestHeader( s_tokenHeaderKey, sessionToken.c_str(), plist );
@@ -1705,6 +1723,43 @@ WsPutRequest::onPrepare( CURL *curl )
 }
 
 //////////////////////////////////////////////////////////////////////////////
+// Response handling for 'copy' operation.
+
+class WsCopyRequest : public WsPutRequest
+{
+public:
+                    WsCopyRequest( const char *name );
+
+private:
+    virtual bool    onExpectXmlPayload() const { return true; }
+    virtual bool    onSetXmlValue( const char *value, int len );
+};
+
+
+WsCopyRequest::WsCopyRequest( const char *name )
+    : WsPutRequest( name, "", 0 )
+{
+}
+
+bool
+WsCopyRequest::onSetXmlValue( const char *value, int len )
+{
+    /* Copy-pasted from WsCompleteMultipartUploadRequest::onSetXmlValue */
+    if( m_stackTop == 2 && m_stack[ m_stackTop - 1 ] == WS_RESPONSE_NODE_ETAG )
+    {
+        // Skip beginning and trailing quotes.
+
+        if( len != 1 || *value != '"' )
+        {
+            m_responseDetails.etag.append( value, len );
+        }
+    }
+
+    return true;
+}
+
+
+//////////////////////////////////////////////////////////////////////////////
 // Response handling for 'del' operation.
 
 class WsDelRequest: public WsRequest
@@ -2422,7 +2477,8 @@ writeNoop( const void *chunkData, size_t count, size_t elementSize, void *ctx ) 
 
 void
 WsConnection::prepare( WsRequest *request, const char *bucketName, const char *key,
-        const char *contentType, bool makePublic, bool useSrvEncrypt )
+        const char *contentType, bool makePublic, bool useSrvEncrypt,
+        const std::string &copySource, const std::string &copySourceRange )
 {
     dbgAssert( !m_asyncRequest ); // some async operation is in progress, need to complete/cancel it first 
                                   // before starting a new one.
@@ -2514,7 +2570,7 @@ WsConnection::prepare( WsRequest *request, const char *bucketName, const char *k
     setRequestHeaders( m_accKey, m_secKey,
     		0 /* contentMd5 */, contentType, makePublic, useSrvEncrypt,
         request->httpVerb(), bucketName, key, m_storType,
-        &request->headers, m_sessionToken);
+        &request->headers, m_sessionToken, copySource, copySourceRange);
 
     curl_easy_setopt_checked( m_curl, CURLOPT_HTTPHEADER, static_cast< curl_slist * >( request->headers ) );
 
@@ -2526,7 +2582,8 @@ WsConnection::prepare( WsRequest *request, const char *bucketName, const char *k
 void
 WsConnection::init( WsRequest *request, const char *bucketName, const char *key, 
                       const char *keySuffix, const char *contentType, 
-                      bool makePublic,  bool useSrvEncrypt )
+                      bool makePublic,  bool useSrvEncrypt,
+                      const std::string &copySource, const std::string &copySourceRange )
 {
     dbgAssert( bucketName );
 
@@ -2534,7 +2591,7 @@ WsConnection::init( WsRequest *request, const char *bucketName, const char *key,
     std::string escapedKey;
     composeUrl( m_baseUrl, bucketName, key, keySuffix, &url, &escapedKey );
 
-    prepare( request, bucketName, key ? escapedKey.c_str() : NULL, contentType, makePublic, useSrvEncrypt );
+    prepare( request, bucketName, key ? escapedKey.c_str() : NULL, contentType, makePublic, useSrvEncrypt, copySource, copySourceRange );
 
     request->setUrl( url.c_str() );
 }
@@ -2638,7 +2695,8 @@ void
 WsConnection::put( WsRequest *request, const char *bucketName, const char *key, 
                   const char *uploadId, int partNumber,
                   bool makePublic, bool useSrvEncrypt, const char *contentType,
-                  WsPutResponse *response )
+                  WsPutResponse *response,
+                  const std::string &copySource, const std::string &copySourceRange )
 {
     dbgAssert( request );
     dbgAssert( bucketName );
@@ -2657,7 +2715,8 @@ WsConnection::put( WsRequest *request, const char *bucketName, const char *key,
     }
 
     init( request, bucketName, key, uploadId ? keySuffix.c_str() : NULL, 
-        contentType ? contentType : s_contentTypeBinary, makePublic, useSrvEncrypt );
+        contentType ? contentType : s_contentTypeBinary, makePublic, useSrvEncrypt,
+        copySource, copySourceRange );
 
     // Execute the request.
 
@@ -2682,7 +2741,8 @@ WsConnection::put( const char *bucketName, const char *key, const void *data,
     {
         WsPutRequest request( key, data, size );
         put( &request, bucketName, key, NULL /* uploadId */, 0 /* partNumber */,
-            makePublic, useSrvEncrypt, contentType, response );
+            makePublic, useSrvEncrypt, contentType, response,
+            "" /* copySource */, "" /* copySourceRange */);
     }
     catch( ... )
     {
@@ -2707,7 +2767,8 @@ WsConnection::put( const char *bucketName, const char *key, WsPutRequestUploader
     {
         WsPutRequest request( key, uploader, totalSize );
         put( &request, bucketName, key, NULL /* uploadId */, 0 /* partNumber */,
-            makePublic, useSrvEncrypt, contentType, response );
+            makePublic, useSrvEncrypt, contentType, response,
+            "" /* copySource */, "" /* copySourceRange */);
     }
     catch( ... )
     {
@@ -2717,6 +2778,39 @@ WsConnection::put( const char *bucketName, const char *key, WsPutRequestUploader
     LOG_TRACE( "leave put: conn=0x%llx", ( UInt64 )this );
 }
 
+
+void 
+WsConnection::copy( const char *bucketName, const char *key, const char *srcBucket, const char *srcKey,
+    size_t fromRange, size_t toRange,
+    bool makePublic, bool useSrvEncrypt, const char *contentType, WsPutResponse *response )
+{
+    dbgAssert( bucketName );
+    dbgAssert( uploader );
+    dbgAssert( key );
+
+    LOG_TRACE( "enter copy: conn=0x%llx", ( UInt64 )this );
+
+    try
+    {
+        std::string copySource = std::string() + "/" + srcBucket + "/" + srcKey;
+        std::string copySourceRange;
+        if (toRange != 0) {
+            char buf[1024];
+            snprintf(buf, 1024, "bytes=%ld-%ld", fromRange, toRange);
+            copySourceRange = buf;
+        }
+        WsCopyRequest request( key );
+        put( &request, bucketName, key, NULL /* uploadId */, 0 /* partNumber */,
+            makePublic, useSrvEncrypt, contentType, response,
+            copySource, copySourceRange);
+    }
+    catch( ... )
+    {
+        throwSummary( "copy", key );
+    }
+
+    LOG_TRACE( "leave copy: conn=0x%llx", ( UInt64 )this );
+}
 
 void
 WsConnection::pendPut( AsyncMan *asyncMan, const char *bucketName, 
@@ -3236,7 +3330,8 @@ WsConnection::putPart( const char *bucketName, const char *key, const char *uplo
 
         WsPutRequest request( key, data, size );
         put( &request, bucketName, key, uploadId, partNumber, 
-            false /* makePublic */, false /* useSrvEncrypt */, NULL /* contentType */, response );
+            false /* makePublic */, false /* useSrvEncrypt */, NULL /* contentType */, response,
+            "" /* copySource */, "" /* copySourceRange */);
         
         if( response )
         {
@@ -3274,7 +3369,8 @@ WsConnection::putPart( const char *bucketName, const char *key, const char *uplo
 
         WsPutRequest request( key, uploader, partSize );
         put( &request, bucketName, key, uploadId, partNumber, 
-            false /* makePublic */, false /* useSrvEncrypt */, NULL /* contentType */, response );
+            false /* makePublic */, false /* useSrvEncrypt */, NULL /* contentType */, response,
+            "" /* copySource */, "" /* copySourceRange */ );
         
         if( response )
         {
@@ -3289,6 +3385,51 @@ WsConnection::putPart( const char *bucketName, const char *key, const char *uplo
     LOG_TRACE( "leave putPart: conn=0x%llx", ( UInt64 )this );
 }
 
+void
+WsConnection::copyPart( const char *bucketName, const char *key, const char *uploadId, 
+        int partNumber, const char *srcBucket, const char *srcKey, size_t fromRange, size_t toRange,
+        WsPutResponse *response /* out */  )
+{
+    dbgAssert( bucketName );
+    dbgAssert( key );
+    dbgAssert( uploadId );
+    dbgAssert( partNumber > 0 );
+    dbgAssert( srcBucket );
+    dbgAssert( srcKey );
+    dbgAssert( m_storType == WST_S3 );
+
+    LOG_TRACE( "enter copyPart: conn=0x%llx", ( UInt64 )this );
+
+    try
+    {
+        // Note: we don't need to add makePublic and useSrvEncrypt to the header because
+        // they are specified in initiateMultipartUpload(..), so pass
+        // makePublic=false and useSrvEncrypt=false.
+
+        std::string copySource = std::string() + "/" + srcBucket + "/" + srcKey;
+        std::string copySourceRange;
+        if (toRange != 0) {
+            char buf[1024];
+            snprintf(buf, 1024, "bytes=%ld-%ld", fromRange, toRange);
+            copySourceRange = buf;
+        }
+        WsCopyRequest request( key );
+        put( &request, bucketName, key, uploadId, partNumber, 
+            false /* makePublic */, false /* useSrvEncrypt */, NULL /* contentType */,
+            response, copySource, copySourceRange );
+        
+        if( response )
+        {
+            response->partNumber = partNumber;
+        }
+    }
+    catch( ... )
+    {
+        throwSummary( "copyPart", key );
+    }
+
+    LOG_TRACE( "leave copyPart: conn=0x%llx", ( UInt64 )this );
+}
 void 
 WsConnection::completeMultipartUpload( const char *bucketName, const char *key, 
                         const char *uploadId, const WsPutResponse *parts, size_t size, 

@@ -450,6 +450,15 @@ public:
                        bool makePublic = false, bool useSrvEncrypt = false, const char *contentType = NULL,
                        WsPutResponse *response = NULL /* out */ );
 
+   ///@brief Synchronously creates a cloud storage object from an existing one.
+   ///@details Creates an object identified by a <b>key</b> in a given <b>bucket</b> and 
+   /// uploads data from an object identified by <b>srcKey</b> in a given <b>srcBucket</b>.
+
+   void             copy( const char *bucketName, const char *key, const char *srcBucket, const char *srcKey,
+                        size_t fromRange = 0, size_t toRange = 0,
+                        bool makePublic = false, bool useSrvEncrypt = false, const char *contentType = NULL,
+                        WsPutResponse *response = NULL /* out */ );
+
    ///@brief Synchronously loads a cloud storage object.
    ///@details Fetches content of an object identified by a <b>key</b> from
    /// a given <b>bucket</b> using provided <b>loader</b> object.
@@ -564,6 +573,15 @@ public:
 
    void             putPart( const char *bucketName, const char *key, const char *uploadId, int partNumber,
                         WsPutRequestUploader *uploader, size_t partSize, WsPutResponse *response = NULL /* out */  );
+
+   ///@brief Synchronously uploads a part from an existing object.
+   ///@details Creates an object identified by a <b>key</b> in a given <b>bucket</b> and 
+   /// uploads data from an object identified by <b>srcKey</b> in a given <b>srcBucket</b>.
+
+   void             copyPart( const char *bucketName, const char *key, const char *uploadId, int partNumber,
+                        const char *srcBucket, const char *srcKey,
+                        size_t fromRange = 0, size_t toRange = 0,
+                        WsPutResponse *response = NULL /* out */ );
 
    ///@brief Synchronously commits a multipart upload.
    ///@details Commits a multipart upload consisting of parts specified in the <b>parts</b> array
@@ -742,16 +760,22 @@ private:
 
     void            prepare( WsRequest *request, const char *bucketName, const char *key,
                         const char *contentType = NULL,
-                        bool makePublic = false, bool useSrvEncrypt = false );
+                        bool makePublic = false, bool useSrvEncrypt = false,
+                        const std::string &copySource = "",
+                        const std::string &copySourceRange = "");
 
     void            init( WsRequest *request, const char *bucketName, const char *key, 
                         const char *keySuffix = NULL, const char *contentType = NULL, 
-                        bool makePublic = false, bool useSrvEncrypt = false );
+                        bool makePublic = false, bool useSrvEncrypt = false,
+                        const std::string &copySource = "",
+                        const std::string &copySourceRange = "");
 
     void            put( WsRequest *request, const char *bucketName, const char *key, 
                         const char *uploadId, int partNumber, 
                         bool makePublic, bool useSrvEncrypt, const char *contentType,
-                        WsPutResponse *response );
+                        WsPutResponse *response,
+                        const std::string &copySource,
+                        const std::string &copySourceRange);
 
     void            del( const char *bucketName, const char *key, const char *keySuffix, 
                         WsDelResponse *response );
